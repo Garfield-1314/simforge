@@ -1,0 +1,26 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.pytest_cache/
+build/
+dist/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+
+# ---- IDE / 编辑器 ----
+.vscode/
+.idea/
+
+# ---- 生成的中间文件（可由脚本重新生成）----
+# 仿真数据: python examples/simulate_motor.py 重新生成
+data/
+# 辨识报告: python examples/motor_speed_id.py 重新生成
+output/
+
+# ---- 系统 ----
+Thumbs.db
+Desktop.ini
+.DS_Store
