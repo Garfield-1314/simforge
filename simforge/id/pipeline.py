@@ -46,8 +46,8 @@ def run_identification(data: MotorData, holdout_duty: float | None = None,
                        max_delay: int | None = None, lags: int = 10,
                        frf_nperseg: int | None = None) -> IdentificationResult:
     """Run the full identification and validation pipeline on one recording."""
-    u = data.pwm
-    v = data.speed_rpm
+    u = data.u
+    v = data.y
     ts = data.ts
 
     segments = find_segments(data)

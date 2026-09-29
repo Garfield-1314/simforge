@@ -21,7 +21,7 @@ from pathlib import Path
 import numpy as np
 
 from .excitation import DEFAULT_SEQUENCE, sequence_to_input
-from .io import MotorData, save_motor_csv
+from .io import SystemData, counts_to_speed_rpm, save_motor_csv
 
 #: ground truth used for the demo dataset (12 V, ~5000 rpm no-load)
 TRUE_K = 50.0        # rpm per % PWM
@@ -63,35 +63,37 @@ def generate_dataset(path: str | Path, fs: float = 500.0, cpr: int = 4096,
                      K: float = TRUE_K, tau: float = TRUE_TAU, td: float = TRUE_TD,
                      noise_rpm: float = 15.0, deadzone_pct: float = 0.0,
                      seed: int | None = 42,
-                     sequence=DEFAULT_SEQUENCE) -> MotorData:
+                     sequence=DEFAULT_SEQUENCE) -> SystemData:
     """Simulate the default excitation sequence and write it as CSV.
 
-    Returns the :class:`MotorData` re-loaded from disk so callers get the
+    Returns the :class:`SystemData` re-loaded from disk so callers get the
     exact object the identification pipeline will consume.
     """
     t, u = sequence_to_input(sequence, fs)
     _, speed, enc = simulate_motor(u, fs, K=K, tau=tau, td=td, cpr=cpr,
                                    noise_rpm=noise_rpm,
                                    deadzone_pct=deadzone_pct, seed=seed)
-    data = MotorData(t=t, pwm=u, enc_delta=enc, fs=fs, counts_per_rev=cpr,
-                     meta={
-                         "fs": f"{fs:g}",
-                         "counts_per_rev": str(cpr),
-                         "supply_V": "12",
-                         "load": "wheel_suspended",
-                         "encoder": "1024 lines x4 quadrature, no gear",
-                         "generator": "simforge.id.simulator",
-                         "true_k": f"{K:g}",
-                         "true_tau_s": f"{tau:g}",
-                         "true_td_s": f"{td:g}",
-                         "noise_rpm": f"{noise_rpm:g}",
-                         "deadzone_pct": f"{deadzone_pct:g}",
-                         "seed": str(seed),
-                     })
+    data = SystemData(t=t, u=u, y=counts_to_speed_rpm(enc, fs, cpr), fs=fs,
+                      input_unit="% PWM", output_unit="rpm",
+                      meta={
+                          "fs": f"{fs:g}",
+                          "counts_per_rev": str(cpr),
+                          "supply_V": "12",
+                          "load": "wheel_suspended",
+                          "encoder": "1024 lines x4 quadrature, no gear",
+                          "generator": "simforge.id.simulator",
+                          "true_k": f"{K:g}",
+                          "true_tau_s": f"{tau:g}",
+                          "true_td_s": f"{td:g}",
+                          "noise_rpm": f"{noise_rpm:g}",
+                          "deadzone_pct": f"{deadzone_pct:g}",
+                          "seed": str(seed),
+                      },
+                      raw=enc)
     save_motor_csv(path, data)
     return load(path)
 
 
-def load(path: str | Path) -> MotorData:
+def load(path: str | Path) -> SystemData:
     from .io import load_motor_csv
     return load_motor_csv(path)

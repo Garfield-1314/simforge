@@ -32,12 +32,12 @@ class Segment:
 
 def find_segments(data: MotorData, min_step: float = 1.0) -> list[Segment]:
     """Split the recording wherever |ΔPWM| >= *min_step* percent."""
-    changes = np.flatnonzero(np.abs(np.diff(data.pwm)) >= min_step) + 1
+    changes = np.flatnonzero(np.abs(np.diff(data.u)) >= min_step) + 1
     bounds = [0, *changes.tolist(), data.n]
     segs = []
     for start, end in zip(bounds[:-1], bounds[1:]):
         if end > start:
-            segs.append(Segment(idx0=start, idx1=end, duty=float(data.pwm[start])))
+            segs.append(Segment(idx0=start, idx1=end, duty=float(data.u[start])))
     return segs
 
 

@@ -53,7 +53,7 @@ def _line(x, y, label, color, ls="-", lw=1.4, alpha=1.0, kind="line", ms=4.0):
 def build_figures(res: IdentificationResult) -> list[dict]:
     """Build all 8 figure definitions from an identification result."""
     data = res.data
-    t, v = data.t, data.speed_rpm
+    t, v = data.t, data.y
     arx, pem = res.arx, res.pem
     p_txt = (f"ARX: K={arx.K:.1f} rpm/%, τ={arx.tau * 1e3:.1f} ms, "
              f"t_d={arx.td * 1e3:.1f} ms")
@@ -71,7 +71,7 @@ def build_figures(res: IdentificationResult) -> list[dict]:
     figs.append({"name": "T1_overview", "title": "T1 采集数据总览",
                  "figsize": (10, 6),
                  "panels": [
-                     _panel([_line(t, data.pwm, "PWM 输入 (%)", C_ARX)],
+                     _panel([_line(t, data.u, "PWM 输入 (%)", C_ARX)],
                             spans=spans1, xlabel="t [s]", ylabel="PWM [%]"),
                      _panel([_line(t, v, "实测转速 (rpm)", C_MEAS, lw=0.9)],
                             spans=spans1, xlabel="t [s]", ylabel="速度 [rpm]"),

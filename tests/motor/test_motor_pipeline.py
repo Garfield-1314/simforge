@@ -14,7 +14,7 @@ import pytest
 
 from simforge.id import check_data, load_motor_csv, run_identification, save_motor_csv
 from simforge.id.arx import identify_arx
-from simforge.id.io import DataFormatError, MotorData
+from simforge.id.io import DataFormatError, SystemData
 from simforge.id.preprocess import find_segments, holdout_indices
 from simforge.id.report import build_figures, write_report
 from simforge.id.simulator import TRUE_K, TRUE_TAU, TRUE_TD, generate_dataset
@@ -52,10 +52,10 @@ def test_csv_roundtrip(tmp_path, sim_data):
     assert check_data(again) == []
 
 
-def test_time_axis_validation(tmp_path):
+def test_time_axis_validation():
     with pytest.raises(DataFormatError):
-        MotorData(t=[0.0, 0.002, 0.001], pwm=[0, 0, 0], enc_delta=[0, 0, 0],
-                  fs=500, counts_per_rev=4096)
+        SystemData(t=[0.0, 0.002, 0.001], u=[0, 0, 0], y=[0, 0, 0],
+                   fs=500)
 
 
 def test_speed_conversion(sim_data):

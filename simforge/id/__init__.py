@@ -9,7 +9,8 @@
     write_report(res, "output/run1")
 """
 
-from .io import MotorData, load_motor_csv, save_motor_csv, check_data
+from .io import SystemData, MotorData, load_motor_csv, load_system_csv, \
+    save_motor_csv, save_system_csv, check_data
 from .arx import ArxResult, identify_arx
 from .stepfit import PemResult, identify_pem
 from .pipeline import IdentificationResult, run_identification
@@ -19,7 +20,9 @@ from .preprocess import find_segments, holdout_indices, Segment
 from . import excitation, simulator
 
 __all__ = [
-    "MotorData", "load_motor_csv", "save_motor_csv", "check_data",
+    "SystemData", "MotorData",
+    "load_motor_csv", "load_system_csv", "save_motor_csv", "save_system_csv",
+    "check_data",
     "ArxResult", "identify_arx",
     "PemResult", "identify_pem",
     "IdentificationResult", "run_identification",
