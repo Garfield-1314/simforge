@@ -24,7 +24,6 @@ from simforge.id.excitation import random_dwell
 from simforge.id.io import SystemData
 from simforge.id.simulator import (generate_second_order_dataset,
                                    second_order_system, simulate_lti)
-from simforge.id.tf import TransferFunction
 
 REPO = Path(__file__).resolve().parents[2]
 TS = 0.002

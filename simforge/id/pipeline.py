@@ -10,7 +10,7 @@ from .arx import ArxResult, identify_arx_auto
 from .io import SystemData
 from .preprocess import (Segment, complement_indices, find_segments,
                          holdout_indices, steady_window)
-from .stepfit import PemResult, identify_pem, select_structure_pem
+from .stepfit import PemResult, select_structure_pem
 from .validate import (CheckResult, Thresholds, acceptance_checks,
                        cross_corr_max, estimate_frf, ljung_box, rmse,
                        steady_state_error_pct, vaf)

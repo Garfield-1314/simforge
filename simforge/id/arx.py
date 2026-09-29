@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .tf import TransferFunction, first_order_from_arx
+from .tf import TransferFunction
 
 
 @dataclass
@@ -39,14 +39,14 @@ class ArxResult:
     rss: float
     n_rows: int
     aic: float
-    criterion: str = "aic"
+    criterion: str = "bic"
     input_unit: str = ""
     output_unit: str = ""
     resid: np.ndarray = field(repr=False, default_factory=lambda: np.empty(0))
     row_idx: np.ndarray = field(repr=False, default_factory=lambda: np.empty(0))
     sweep: list[tuple[int, int, int, float]] = field(default_factory=list)
     order_sweep: dict[int, float] = field(default_factory=dict)
-    method: str = "iv"
+    method: str = "auto"
 
     # ---- compat scalar accessors (first coefficients) -------------------- #
     @property
@@ -139,12 +139,12 @@ class ArxResult:
                     self.criterion: self.aic},
             "transfer_function": tf.to_dict(),
         }
-        # legacy aliases (first-order naming) kept for existing consumers
-        out["K_rpm_per_pct"] = self.K
+        # scalar time-constant view (exact for order 1, dominant pole else)
         if self.tau is not None:
             out["tau_s"] = self.tau
             out["bandwidth_hz"] = self.bandwidth_hz
-            out["conf_95"]["tau"] = list(self.tau_ci) if self.tau_ci else []
+        if self.tau_ci is not None:
+            out["conf_95"]["tau"] = list(self.tau_ci)
         return out
 
 

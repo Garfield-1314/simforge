@@ -238,16 +238,15 @@ def acceptance_checks(metrics: dict, has_holdout: bool,
         f"<= {metrics['xcorr_band']:.4f}"))
 
     # 6 -- agreement between the two methods
-    diffs = [metrics["k_diff_pct"]]
-    thr = [th.method_diff]
+    diffs = [("K", metrics["k_diff_pct"])]
     if np.isfinite(metrics.get("tau_diff_pct", float("nan"))):
-        diffs.append(metrics["tau_diff_pct"])
-    worst = max(diffs)
-    labels = "K" + ("/tau" if len(diffs) > 1 else "")
+        diffs.append(("tau", metrics["tau_diff_pct"]))
+    worst = max(v for _, v in diffs)
+    labels = "/".join(name for name, _ in diffs)
     checks.append(_check(
         f"6 双方法一致性 ({labels}) <= {th.method_diff:g}%",
         worst <= th.method_diff,
-        " / ".join(f"{d:.2f}%" for d in diffs), f"<= {th.method_diff:g}%"))
+        " / ".join(f"{v:.2f}%" for _, v in diffs), f"<= {th.method_diff:g}%"))
 
     # 7 -- parameter confidence intervals (PEM primary, ARX shown for info)
     def _first_finite(*keys):

@@ -249,7 +249,6 @@ def build_figures(res: IdentificationResult) -> list[dict]:
                  ]})
 
     # ---- M1 model summary card --------------------------------------------- #
-    tf_d = tf.to_dict()
     gap = m.get("order_gap")
     gap_txt = f"{gap:.1f}" if gap is not None and np.isfinite(gap) else "n/a (单阶次)"
     summary_lines = [
@@ -527,6 +526,24 @@ def _model_json(res: IdentificationResult) -> dict:
     }
 
 
+def _json_safe(obj):
+    """Recursively replace NaN/inf with None so the JSON stays strict."""
+    if isinstance(obj, dict):
+        return {str(k): _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    if isinstance(obj, np.ndarray):
+        return _json_safe(obj.tolist())
+    if isinstance(obj, (float, np.floating)):
+        f = float(obj)
+        return f if np.isfinite(f) else None
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    if isinstance(obj, (np.bool_,)):
+        return bool(obj)
+    return obj
+
+
 def write_report(res: IdentificationResult, outdir: str | Path,
                  title: str = "系统辨识报告") -> dict:
     """Write PNGs, interactive HTML, model.json, metrics.json, report.md."""
@@ -541,13 +558,13 @@ def write_report(res: IdentificationResult, outdir: str | Path,
         png_paths.append(p)
 
     # ---- model.json / metrics.json ----------------------------------------- #
-    model = _model_json(res)
+    model = _json_safe(_model_json(res))
     (outdir / "model.json").write_text(
-        json.dumps(model, indent=2, ensure_ascii=False), encoding="utf-8")
+        json.dumps(model, indent=2, ensure_ascii=False, allow_nan=False),
+        encoding="utf-8")
     (outdir / "metrics.json").write_text(
-        json.dumps({k: (float(v) if isinstance(v, (np.floating, np.integer)) else v)
-                    for k, v in res.metrics.items()},
-                   indent=2, ensure_ascii=False), encoding="utf-8")
+        json.dumps(_json_safe(res.metrics), indent=2, ensure_ascii=False,
+                   allow_nan=False), encoding="utf-8")
 
     # ---- report.md ---------------------------------------------------------- #
     arx, pem, m = res.arx, res.pem, res.metrics

@@ -82,12 +82,12 @@ class PemResult:
                     "converged": self.success, "nfev": self.nfev},
             "transfer_function": self.to_tf().to_dict(),
         }
-        # legacy aliases (first-order naming)
-        out["K_rpm_per_pct"] = self.K
+        # scalar time-constant view (exact for order 1, dominant pole else)
         if self.tau is not None:
             out["tau_s"] = self.tau
             out["bandwidth_hz"] = self.bandwidth_hz
-            out["conf_95"]["tau"] = list(self.tau_ci) if self.tau_ci else []
+        if self.tau_ci is not None:
+            out["conf_95"]["tau"] = list(self.tau_ci)
         return out
 
 
