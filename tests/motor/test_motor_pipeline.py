@@ -162,10 +162,18 @@ def test_report_outputs(tmp_path, sim_data):
     assert (out / "report.html").stat().st_size > 1_000_000  # embeds plotly.js
     assert (out / "report.md").stat().st_size > 1000
     model = json.loads((out / "model.json").read_text(encoding="utf-8"))
-    assert model["model_type"] == "first_order_with_delay"
-    assert abs(model["arx"]["K_rpm_per_pct"] - TRUE_K) / TRUE_K < 0.02
+    assert model["model_type"] == "siso_lti_with_delay"
+    assert abs(model["arx"]["dc_gain"] - TRUE_K) / TRUE_K < 0.02
+    assert "G(s)_bilinear" in model["transfer_function"]
+    assert model["transfer_function"]["G(z)"].startswith("G(z)")
+    assert "= 0" in model["characteristic_equation"]["z"]
+    assert "= 0" in model["characteristic_equation"]["s"]
+    assert model["poles"]["stable"] is True
+    assert model["order_selection"]["chosen_n"] == 1
     assert model["operating_conditions"]["load"] == "wheel_suspended"
-    assert len(paths["pngs"]) == 8
+    assert model["units"]["input"] == "% PWM"
+    assert model["units"]["output"] == "rpm"
+    assert len(paths["pngs"]) == 11
     for p in paths["pngs"]:
         import pathlib
         assert pathlib.Path(p).stat().st_size > 5000
@@ -173,4 +181,5 @@ def test_report_outputs(tmp_path, sim_data):
     figs = build_figures(res)
     assert [f["name"] for f in figs] == [
         "T1_overview", "T2_step_fit", "T3_holdout", "T4_residual",
-        "T5_methods", "F1_bode_mag", "F2_bode_phase", "F3_residual_psd"]
+        "T5_methods", "F1_bode_mag", "F2_bode_phase", "F3_residual_psd",
+        "M1_model_summary", "M2_pole_zero", "M3_order_sweep"]

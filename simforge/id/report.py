@@ -1,15 +1,21 @@
-"""Report generation: 8 figures (PNG + interactive HTML), model.json, report.md.
+"""Report generation: 11 figures (PNG + interactive HTML), model.json, report.md.
 
 Figure list
 -----------
-T1  acquisition overview (PWM & speed, hold-out highlighted)
+T1  acquisition overview (input & output, hold-out highlighted)
 T2  step-response fit: measured vs model (train emphasised)
 T3  hold-out prediction (out-of-sample)
 T4  free-run residual timeline with 95% band
-T5  ARX vs PEM vs measured (zoom on a train pulse)
+T5  ARX vs PEM vs measured (zoom on a train segment)
 F1  Bode magnitude: model + Welch FRF estimate with coherence
 F2  Bode phase: model + Welch FRF estimate
 F3  residual power spectrum (flat == white noise)
+M1  model summary card: G(s), G(z), characteristic equations, poles
+M2  pole-zero map (z-plane unit circle + s-plane)
+M3  order-selection sweep (criterion per order + tie tolerance band)
+
+All labels use the units declared on the data (``input_unit`` /
+``output_unit``), so the report reads correctly for any system.
 """
 
 from __future__ import annotations
@@ -21,13 +27,14 @@ from pathlib import Path
 import numpy as np
 
 from .pipeline import IdentificationResult
-from .validate import model_bode, residual_psd
+from .validate import residual_psd
 
 C_MEAS = "#333333"
 C_ARX = "#1f77b4"
 C_PEM = "#ff7f0e"
 C_HOLD = "#ffd8b0"
 C_RESID = "#9467bd"
+C_ORDER = "#d62728"
 
 CHECK_ICON = {"pass": "✅", "fail": "❌", "skip": "⏭️", "manual": "🧭"}
 
@@ -37,11 +44,11 @@ CHECK_ICON = {"pass": "✅", "fail": "❌", "skip": "⏭️", "manual": "🧭"}
 # --------------------------------------------------------------------------- #
 def _panel(series=(), spans=(), hlines=(), *, xlabel="", ylabel="",
            title="", xscale="linear", yscale="linear", xlim=None,
-           ylim=None, legend=True) -> dict:
+           ylim=None, legend=True, text=None, equal_aspect=False) -> dict:
     return {"series": list(series), "spans": list(spans), "hlines": list(hlines),
             "xlabel": xlabel, "ylabel": ylabel, "title": title,
             "xscale": xscale, "yscale": yscale, "xlim": xlim, "ylim": ylim,
-            "legend": legend}
+            "legend": legend, "text": text, "equal_aspect": equal_aspect}
 
 
 def _line(x, y, label, color, ls="-", lw=1.4, alpha=1.0, kind="line", ms=4.0):
@@ -50,44 +57,61 @@ def _line(x, y, label, color, ls="-", lw=1.4, alpha=1.0, kind="line", ms=4.0):
             "ms": ms}
 
 
+def _units(res: IdentificationResult) -> tuple[str, str, str]:
+    """(input label, output label, gain unit)."""
+    d = res.data
+    in_u = d.input_unit or "u"
+    out_u = d.output_unit or "y"
+    gain_u = f"{out_u}/{in_u}" if (d.input_unit and d.output_unit) else ""
+    return f"输入 [{in_u}]", f"输出 [{out_u}]", gain_u
+
+
 def build_figures(res: IdentificationResult) -> list[dict]:
-    """Build all 8 figure definitions from an identification result."""
+    """Build all 11 figure definitions from an identification result."""
     data = res.data
-    t, v = data.t, data.y
-    arx, pem = res.arx, res.pem
-    p_txt = (f"ARX: K={arx.K:.1f} rpm/%, τ={arx.tau * 1e3:.1f} ms, "
-             f"t_d={arx.td * 1e3:.1f} ms")
+    t, y = data.t, data.y
+    arx, pem, m = res.arx, res.pem, res.metrics
+    in_lbl, out_lbl, gain_u = _units(res)
+    n1 = arx.n_order == 1
+
+    if n1:
+        p_txt = (f"K={arx.K:.4g}{(' ' + gain_u) if gain_u else ''}, "
+                 f"τ={arx.tau * 1e3:.1f} ms, t_d={arx.td * 1e3:.1f} ms")
+    else:
+        p_txt = (f"阶次 n={arx.n_order}, m={arx.m_order}, "
+                 f"DC 增益={arx.K:.4g}{(' ' + gain_u) if gain_u else ''}, "
+                 f"t_d={arx.td * 1e3:.1f} ms")
 
     hold_span = None
     if res.has_holdout:
         hold_span = {"x0": float(t[res.hold_idx[0]]),
                      "x1": float(t[res.hold_idx[-1]]),
                      "color": C_HOLD, "label": "留出段(未参与辨识)"}
+    spans1 = [hold_span] if hold_span else []
 
     figs: list[dict] = []
 
-    # ---- T1 overview --------------------------------------------------- #
-    spans1 = [hold_span] if hold_span else []
+    # ---- T1 overview ----------------------------------------------------- #
     figs.append({"name": "T1_overview", "title": "T1 采集数据总览",
                  "figsize": (10, 6),
                  "panels": [
-                     _panel([_line(t, data.u, "PWM 输入 (%)", C_ARX)],
-                            spans=spans1, xlabel="t [s]", ylabel="PWM [%]"),
-                     _panel([_line(t, v, "实测转速 (rpm)", C_MEAS, lw=0.9)],
-                            spans=spans1, xlabel="t [s]", ylabel="速度 [rpm]"),
+                     _panel([_line(t, data.u, in_lbl, C_ARX)],
+                            spans=spans1, xlabel="t [s]", ylabel=in_lbl),
+                     _panel([_line(t, y, out_lbl, C_MEAS, lw=0.9)],
+                            spans=spans1, xlabel="t [s]", ylabel=out_lbl),
                  ]})
 
-    # ---- T2 step fit ---------------------------------------------------- #
-    figs.append({"name": "T2_step_fit", "title": f"T2 阶跃响应拟合 — {p_txt}",
+    # ---- T2 step fit ------------------------------------------------------- #
+    figs.append({"name": "T2_step_fit", "title": f"T2 拟合 — {p_txt}",
                  "figsize": (10, 4.6),
                  "panels": [
-                     _panel([_line(t, v, "实测转速", C_MEAS, lw=0.9),
-                             _line(t, res.v_pem, "PEM 模型 (速度拟合)", C_PEM),
+                     _panel([_line(t, y, "实测", C_MEAS, lw=0.9),
+                             _line(t, res.v_pem, "PEM 模型 (OE)", C_PEM),
                              _line(t, res.v_arx, "ARX 模型", C_ARX, ls="--")],
-                            spans=spans1, xlabel="t [s]", ylabel="速度 [rpm]"),
+                            spans=spans1, xlabel="t [s]", ylabel=out_lbl),
                  ]})
 
-    # ---- T3 hold-out ---------------------------------------------------- #
+    # ---- T3 hold-out ------------------------------------------------------- #
     if res.has_holdout:
         i0, i1 = int(res.hold_idx[0]), int(res.hold_idx[-1])
         pad = 0.3
@@ -95,25 +119,26 @@ def build_figures(res: IdentificationResult) -> list[dict]:
         sl = slice(i0, i1 + 1)
         figs.append({"name": "T3_holdout",
                      "title": ("T3 留出段预测  VAF: "
-                               f"ARX {res.metrics.get('vaf_holdout_arx', float('nan')):.1f}% / "
-                               f"PEM {res.metrics.get('vaf_holdout_pem', float('nan')):.1f}%"),
+                               f"ARX {m.get('vaf_holdout_arx', float('nan')):.1f}% / "
+                               f"PEM {m.get('vaf_holdout_pem', float('nan')):.1f}%"),
                      "figsize": (10, 4.6),
                      "panels": [
-                         _panel([_line(t[sl], v[sl], "实测转速", C_MEAS, lw=0.9),
+                         _panel([_line(t[sl], y[sl], "实测", C_MEAS, lw=0.9),
                                  _line(t[sl], res.v_pem[sl], "PEM 模型", C_PEM),
                                  _line(t[sl], res.v_arx[sl], "ARX 模型", C_ARX, ls="--")],
-                                xlabel="t [s]", ylabel="速度 [rpm]", xlim=xlim),
+                                xlabel="t [s]", ylabel=out_lbl, xlim=xlim),
                      ]})
     else:
         figs.append({"name": "T3_holdout", "title": "T3 留出段预测 (无留出段)",
                      "figsize": (10, 3.2),
-                     "panels": [_panel([], xlabel="t [s]", ylabel="速度 [rpm]")]})
+                     "panels": [_panel([], xlabel="t [s]", ylabel=out_lbl)]})
 
-    # ---- T4 residuals ---------------------------------------------------- #
+    # ---- T4 residuals ------------------------------------------------------- #
     sigma = float(np.std(res.e_free))
     band = 1.96 * sigma
     figs.append({"name": "T4_residual",
-                 "title": f"T4 残差时序 (实测−ARX 仿真)  1σ={sigma:.1f} rpm",
+                 "title": f"T4 残差时序 (实测−ARX 仿真)  1σ={sigma:.4g} "
+                          f"{data.output_unit or 'y'}",
                  "figsize": (10, 4.0),
                  "panels": [
                      _panel([_line(t, res.e_free, "残差", C_RESID, lw=0.7)],
@@ -121,49 +146,62 @@ def build_figures(res: IdentificationResult) -> list[dict]:
                                      "label": "±1.96σ"},
                                     {"y": -band, "color": "gray", "ls": "--"},
                                     {"y": 0.0, "color": "black", "ls": ":", "lw": 0.8}],
-                            xlabel="t [s]", ylabel="误差 [rpm]"),
+                            xlabel="t [s]", ylabel=f"误差 [{data.output_unit or 'y'}]"),
                  ]})
 
-    # ---- T5 methods compare (first train pulse) -------------------------- #
-    pulse_train = next((s for s in res.segments if abs(s.duty) > 1e-9
-                        and abs(s.duty - (data.meta_number("holdout_duty") or -1e9)) > 1e-9
-                        and (not res.has_holdout
-                             or abs(s.idx0 - res.hold_idx[0]) > 0)),
-                       None)
-    if pulse_train is None:
-        pulse_train = next((s for s in res.segments if abs(s.duty) > 1e-9), None)
-    if pulse_train is not None:
+    # ---- T5 methods compare (first train segment) -------------------------- #
+    pulses = [s for s in res.segments if abs(s.duty) > 1e-9]
+    hold0 = res.hold_idx[0] if res.has_holdout else -1
+    train_pulse = next((s for s in pulses if s.idx0 != hold0), None)
+    if train_pulse is None and pulses:
+        train_pulse = pulses[0]
+    if train_pulse is not None:
         pad = 0.4
-        xlim5 = (t[pulse_train.idx0] - pad, t[min(pulse_train.idx1 + int(0.5 / data.fs), data.n - 1)] + pad)
+        xlim5 = (t[train_pulse.idx0] - pad,
+                 t[min(train_pulse.idx1 + int(0.5 * data.fs), data.n - 1)] + pad)
     else:
         xlim5 = None
     figs.append({"name": "T5_methods",
                  "title": ("T5 双方法对比 (训练段)  "
-                           f"K 差异 {res.metrics['k_diff_pct']:.2f}% / "
-                           f"τ 差异 {res.metrics['tau_diff_pct']:.2f}%"),
+                           f"K 差异 {m['k_diff_pct']:.2f}%"
+                           + (f" / τ 差异 {m['tau_diff_pct']:.2f}%"
+                              if np.isfinite(m.get("tau_diff_pct", float('nan'))) else "")),
                  "figsize": (10, 4.6),
                  "panels": [
-                     _panel([_line(t, v, "实测转速", C_MEAS, lw=0.9),
+                     _panel([_line(t, y, "实测", C_MEAS, lw=0.9),
                              _line(t, res.v_arx, "ARX", C_ARX, ls="--"),
                              _line(t, res.v_pem, "PEM", C_PEM, ls=":")],
-                            xlabel="t [s]", ylabel="速度 [rpm]", xlim=xlim5),
+                            xlabel="t [s]", ylabel=out_lbl, xlim=xlim5),
                  ]})
 
-    # ---- F1/F2 Bode ------------------------------------------------------- #
+    # ---- F1/F2 Bode (discrete model frequency response, exact) -------------- #
     f, H, coh = res.frf
     mask = f > 0
     f_plot = f[mask]
-    mag_data = 20.0 * np.log10(np.maximum(np.abs(H[mask]), 1e-9))
+    mag_data = 20.0 * np.log10(np.maximum(np.abs(H[mask]), 1e-12))
     phase_data = np.unwrap(np.angle(H[mask])) * 180.0 / np.pi
     good = coh[mask] >= 0.7
+    f_max = min(50.0, float(f_plot.max()) if f_plot.max() > 0 else 50.0)
     freqs = np.logspace(np.log10(max(f_plot.min(), 0.05)),
-                        np.log10(min(50.0, f_plot.max() if f_plot.max() > 0 else 50.0)), 400)
-    mag_arx, ph_arx = model_bode(arx.K, arx.tau, arx.td, freqs)
-    mag_pem, ph_pem = model_bode(pem.K, pem.tau, pem.td, freqs)
-    db3 = 20 * np.log10(max(arx.K, 1e-9)) - 3.0
+                        np.log10(max(f_max, 0.1)), 400)
+    tf = arx.to_tf()
+    h_model = tf.freq_response(freqs)
+    mag_arx = 20.0 * np.log10(np.maximum(np.abs(h_model), 1e-12))
+    ph_arx = np.unwrap(np.angle(h_model)) * 180.0 / np.pi
+    tfp = pem.to_tf()
+    h_pem = tfp.freq_response(freqs)
+    mag_pem = 20.0 * np.log10(np.maximum(np.abs(h_pem), 1e-12))
+    ph_pem = np.unwrap(np.angle(h_pem)) * 180.0 / np.pi
+    if n1:
+        mag_ref = 20 * np.log10(max(arx.K, 1e-9)) - 3.0
+        bw_txt = f"-3dB {mag_ref:.1f} dB, 带宽 {arx.bandwidth_hz:.2f} Hz"
+    else:
+        tau = tf.tau_eff()
+        mag_ref = 20 * np.log10(max(arx.K, 1e-9)) - 3.0
+        bw_txt = (f"-3dB {mag_ref:.1f} dB, 主导带宽 {1/(2*np.pi*tau):.2f} Hz"
+                  if tau else f"-3dB {mag_ref:.1f} dB")
 
-    figs.append({"name": "F1_bode_mag",
-                 "title": f"F1 伯德幅频 — 带宽 {arx.bandwidth_hz:.2f} Hz (-3dB {db3:.1f} dB)",
+    figs.append({"name": "F1_bode_mag", "title": f"F1 伯德幅频 — {bw_txt}",
                  "figsize": (10, 4.6),
                  "panels": [
                      _panel([
@@ -173,7 +211,7 @@ def build_figures(res: IdentificationResult) -> list[dict]:
                                "#2ca02c", kind="scatter", ms=3, ls=""),
                          _line(f_plot[~good], mag_data[~good], "实测 FRF (低相干)",
                                "#2ca02c", kind="scatter", ms=3, ls="", alpha=0.35),
-                         ], hlines=[{"y": db3, "color": "gray", "ls": "--",
+                         ], hlines=[{"y": mag_ref, "color": "gray", "ls": "--",
                                      "label": "-3dB"}],
                          xlabel="频率 [Hz]", ylabel="幅值 [dB]",
                          xscale="log", xlim=(freqs[0], freqs[-1])),
@@ -194,7 +232,7 @@ def build_figures(res: IdentificationResult) -> list[dict]:
                          xscale="log", xlim=(freqs[0], freqs[-1])),
                  ]})
 
-    # ---- F3 residual PSD -------------------------------------------------- #
+    # ---- F3 residual PSD ---------------------------------------------------- #
     f_r, pxx = residual_psd(res.e_fit, data.fs)
     pxx_db = 10.0 * np.log10(np.maximum(pxx, 1e-20))
     floor = float(np.mean(pxx_db))
@@ -207,8 +245,89 @@ def build_figures(res: IdentificationResult) -> list[dict]:
                             hlines=[{"y": floor, "color": "gray", "ls": "--",
                                      "label": f"均值 {floor:.1f} dB"}],
                             xlabel="频率 [Hz]", ylabel="PSD [dB]",
-                            xlim=(0, min(50.0, float(f_r[-1])))),
+                            xlim=(0, min(50.0, float(f_r[-1]) if len(f_r) else 50))),
                  ]})
+
+    # ---- M1 model summary card --------------------------------------------- #
+    tf_d = tf.to_dict()
+    gap = m.get("order_gap")
+    gap_txt = f"{gap:.1f}" if gap is not None and np.isfinite(gap) else "n/a (单阶次)"
+    summary_lines = [
+        tf.g_s_str(),
+        tf.g_z_str(),
+        f"特征方程(z): {tf.char_eq_z()}",
+        f"特征方程(s): {tf.char_eq_s()}",
+        f"DC 增益 = {tf.dc_gain:.6g} {gain_u}   延迟 = {arx.delay} 采样 ({arx.td * 1e3:.1f} ms)",
+        f"极点(z) = {np.round(tf.poles_z(), 5).tolist()}   稳定 = {tf.is_stable}",
+        f"极点(s) = {[complex(np.round(p, 3)) for p in tf.poles_s()]}",
+        (f"τ(精确,一阶) = {arx.tau * 1e3:.2f} ms   带宽 = {arx.bandwidth_hz:.3f} Hz"
+         if n1 and arx.tau else ""),
+        (f"主导时间常数 = {tf.tau_eff() * 1e3:.2f} ms" if tf.tau_eff() else ""),
+        f"阶次 n={arx.n_order} m={arx.m_order}  准则={str(m.get('criterion','')).upper()} "
+        f"取阶 n={int(m.get('order_n', arx.n_order))}  gap={gap_txt}",
+        f"估计方法 = {arx.method.upper()} (LS=过程噪声高效 / IV=测量噪声无偏)",
+    ]
+    figs.append({"name": "M1_model_summary",
+                 "title": "M1 模型摘要 (传递函数 · 特征方程 · 极点)",
+                 "figsize": (10, 4.4),
+                 "panels": [_panel([], xlabel="", ylabel="", legend=False,
+                                   text="\n".join(s for s in summary_lines if s))]})
+
+    # ---- M2 pole-zero map ---------------------------------------------------- #
+    pz = tf.poles_z()
+    zz = tf.zeros_z()
+    circ = np.exp(1j * np.linspace(0, 2 * np.pi, 361))
+    ps = tf.poles_s()
+    finite_s = ps[np.isfinite(ps.real)]
+    figs.append({"name": "M2_pole_zero",
+                 "title": "M2 零极点 (上: Z 平面 · 下: S 平面)",
+                 "figsize": (10, 4.6),
+                 "panels": [
+                     _panel([
+                         _line(circ.real, circ.imag, "|z|=1", "#999999", ls="--", lw=0.8),
+                         _line(np.real(pz), np.imag(pz), "极点", C_ORDER,
+                               kind="scatter", ms=9, ls=""),
+                         _line(np.real(zz), np.imag(zz), "零点", "#17becf",
+                               kind="scatter", ms=9, ls=""),
+                         ], xlabel="Re(z)", ylabel="Im(z)", title="Z 平面",
+                         xlim=(-1.3, 1.3), ylim=(-1.3, 1.3), equal_aspect=True),
+                     _panel([
+                         _line(np.real(finite_s), np.imag(finite_s), "极点", C_ORDER,
+                               kind="scatter", ms=9, ls=""),
+                         _line([0, 0], [np.min(np.imag(finite_s)) if finite_s.size else -1,
+                                       np.max(np.imag(finite_s)) if finite_s.size else 1],
+                               "jw 轴", "#999999", ls="--", lw=0.8),
+                         ], xlabel="Re(s) [1/s]", ylabel="Im(s) [1/s]", title="S 平面"),
+                 ]})
+
+    # ---- M3 order sweep ------------------------------------------------------ #
+    ob = m.get("order_bic") or {}
+    if ob:
+        orders = sorted(int(k) for k in ob)
+        vals = [ob[str(o)] if str(o) in ob else ob[o] for o in orders]
+        best_v = min(vals)
+        tol = float(m.get("order_tolerance") or 0.0)
+        chosen = int(m.get("order_n", orders[0]))
+        xs = [str(o) for o in orders]
+        figs.append({"name": "M3_order_sweep",
+                     "title": (f"M3 阶次选择 — 准则 {str(m.get('criterion','')).upper()} "
+                               f"取 n={chosen} (平局容差 {tol:.0f})"),
+                     "figsize": (10, 4.0),
+                     "panels": [
+                         _panel([
+                             _line(xs, vals, "各阶次最优准则值", C_ARX,
+                                   kind="scatter", ms=8, ls="-"),
+                             _line([str(chosen)], [ob.get(str(chosen), best_v)],
+                                   "选定阶次", C_ORDER, kind="scatter", ms=12, ls=""),
+                             ], hlines=[{"y": best_v + tol, "color": "gray",
+                                         "ls": "--", "label": "简单性容差 (+5% RSS)"}],
+                             xlabel="阶次 n", ylabel=f"{str(m.get('criterion','')).upper()} 准则值"),
+                     ]})
+    else:
+        figs.append({"name": "M3_order_sweep",
+                     "title": "M3 阶次选择 (未记录扫描)",
+                     "figsize": (10, 3.0),
+                     "panels": [_panel([], xlabel="阶次 n", ylabel="准则值")]})
 
     return figs
 
@@ -233,6 +352,13 @@ def _render_mpl_panel(ax, panel: dict) -> None:
     for h in panel["hlines"]:
         ax.axhline(h["y"], color=h["color"], ls=h.get("ls", "--"),
                    lw=h.get("lw", 1.0), label=h.get("label"))
+    if panel.get("text"):
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.text(0.02, 0.96, panel["text"], transform=ax.transAxes,
+                va="top", ha="left", fontsize=10,
+                family=["Consolas", "Microsoft YaHei", "DejaVu Sans"],
+                bbox=dict(boxstyle="round,pad=0.5", fc="#f7f7f7", ec="#cccccc"))
     ax.set_xscale(panel["xscale"])
     ax.set_yscale(panel["yscale"])
     if panel["xlim"]:
@@ -246,7 +372,9 @@ def _render_mpl_panel(ax, panel: dict) -> None:
     if panel["title"]:
         ax.set_title(panel["title"], fontsize=10)
     ax.grid(alpha=0.3)
-    if panel["legend"]:
+    if panel.get("equal_aspect"):
+        ax.set_aspect("equal", adjustable="box")
+    if panel["legend"] and not panel.get("text"):
         ax.legend(fontsize=8, loc="best")
 
 
@@ -306,12 +434,22 @@ def _render_plotly(figdef: dict):
         for h in panel["hlines"]:
             fig.add_hline(y=h["y"], line_dash="dash", line_color=h.get("color", "gray"),
                           annotation_text=h.get("label"), row=r, col=1)
+        if panel.get("text"):
+            fig.add_annotation(text="<br>".join(
+                ln.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                for ln in panel["text"].split("\n")),
+                xref="x domain", yref="y domain", x=0.02, y=0.98,
+                showarrow=False, align="left", valign="top",
+                font=dict(family="Consolas, monospace", size=13),
+                row=r, col=1)
         fig.update_xaxes(title_text=panel["xlabel"], type=panel["xscale"],
                          range=[np.log10(v) for v in panel["xlim"]]
                          if panel["xscale"] == "log" and panel["xlim"] else panel["xlim"],
                          row=r, col=1)
         fig.update_yaxes(title_text=panel["ylabel"], type=panel["yscale"],
                          range=panel["ylim"], row=r, col=1)
+        if panel.get("equal_aspect"):
+            fig.update_yaxes(scaleratio=1, row=r, col=1)
     fig.update_layout(title=figdef["title"], height=340 * len(panels) + 120,
                       template="plotly_white", legend={"orientation": "h"})
     return fig
@@ -345,19 +483,37 @@ def _checks_html(checks) -> str:
 def _model_json(res: IdentificationResult) -> dict:
     m = res.metrics
     data = res.data
-    # metadata keys are lower-cased on load; match case-insensitively
+    tf = res.arx.to_tf()
     lower = {k.lower(): v for k, v in data.meta.items()}
     conds = {"supply_V": lower.get("supply_v"), "load": lower.get("load"),
-             "encoder": lower.get("encoder"), "ref_k": lower.get("ref_k"),
+             "encoder": lower.get("encoder"), "ref_gain": lower.get("ref_gain", lower.get("ref_k")),
              "source_note": lower.get("source_note")}
+    units = {"input": data.input_unit or "u", "output": data.output_unit or "y",
+             "sample_rate_hz": data.fs}
+    if data.counts_per_rev is not None:
+        units["counts_per_rev"] = data.counts_per_rev
     return {
-        "model_type": "first_order_with_delay",
-        "G(s)": "K * exp(-td*s) / (tau*s + 1)",
+        "model_type": "siso_lti_with_delay",
+        "structure": f"ARX({res.arx.n_order},{res.arx.m_order}) + delay "
+                     f"{res.arx.delay} samples",
         "arx": res.arx.to_dict(),
         "pem": res.pem.to_dict(),
-        "units": {"input": "pwm_percent", "output": "rpm",
-                  "encoder": f"{data.counts_per_rev}_counts_per_rev",
-                  "sample_rate_hz": data.fs},
+        "transfer_function": tf.to_dict(),
+        "characteristic_equation": {"z": tf.char_eq_z(), "s": tf.char_eq_s()},
+        "poles": {"z": [[float(np.real(p)), float(np.imag(p))] for p in tf.poles_z()],
+                  "s": [[float(np.real(p)), float(np.imag(p))] for p in tf.poles_s()],
+                  "zeros_z": [[float(np.real(z)), float(np.imag(z))]
+                              for z in tf.zeros_z()],
+                  "stable": bool(tf.is_stable)},
+        "order_selection": {
+            "criterion": m.get("criterion"),
+            "chosen_n": m.get("order_n"), "chosen_m": m.get("order_m"),
+            "order_values": m.get("order_bic"),
+            "gap": m.get("order_gap"),
+            "simplicity_tolerance": m.get("order_tolerance"),
+            "estimator": m.get("arx_method"),
+        },
+        "units": units,
         "validation": {k: (round(float(v), 6) if isinstance(v, (int, float, np.floating))
                            else v) for k, v in m.items()},
         "checks": [{"name": c.name, "status": c.status, "value": c.value,
@@ -370,7 +526,7 @@ def _model_json(res: IdentificationResult) -> dict:
 
 
 def write_report(res: IdentificationResult, outdir: str | Path,
-                 title: str = "直流电机速度环模型辨识报告") -> dict:
+                 title: str = "系统辨识报告") -> dict:
     """Write PNGs, interactive HTML, model.json, metrics.json, report.md."""
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -382,7 +538,7 @@ def write_report(res: IdentificationResult, outdir: str | Path,
         _render_png(figdef, p)
         png_paths.append(p)
 
-    # ---- model.json / metrics.json -------------------------------------- #
+    # ---- model.json / metrics.json ----------------------------------------- #
     model = _model_json(res)
     (outdir / "model.json").write_text(
         json.dumps(model, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -391,45 +547,71 @@ def write_report(res: IdentificationResult, outdir: str | Path,
                     for k, v in res.metrics.items()},
                    indent=2, ensure_ascii=False), encoding="utf-8")
 
-    # ---- report.md ------------------------------------------------------- #
+    # ---- report.md ---------------------------------------------------------- #
     arx, pem, m = res.arx, res.pem, res.metrics
+    tf = arx.to_tf()
+    data = res.data
+    in_lbl, out_lbl, gain_u = _units(res)
+    n1 = arx.n_order == 1
     md = [f"# {title}", "",
-          f"- 数据源: `{res.data.source}`",
-          f"- 采样率: {res.data.fs:g} Hz, 编码器: {res.data.counts_per_rev} counts/rev, "
-          f"时长: {res.data.duration:.1f} s",
+          f"- 数据源: `{data.source}`",
+          f"- 采样率: {data.fs:g} Hz, 输入: `{data.input_unit or 'u'}`, "
+          f"输出: `{data.output_unit or 'y'}`, 时长: {data.duration:.1f} s",
+          f"- 结构: ARX({arx.n_order},{arx.m_order}) + {arx.delay} 拍延迟, "
+          f"估计器: {arx.method.upper()}, 准则: {str(m.get('criterion','')).upper()}",
           f"- 生成时间: {_dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", "",
           "## 模型", "",
-          "$$G(s) = K \\cdot e^{-t_d s}/(\\tau s + 1)$$", "",
-          "| 参数 | ARX (主) | PEM (计数拟合) | ARX 95% CI |",
-          "|------|----------|----------------|------------|",
-          f"| K [rpm/%] | {arx.K:.2f} | {pem.K:.2f} | "
-          f"[{arx.K_ci[0]:.2f}, {arx.K_ci[1]:.2f}] |",
-          f"| τ [ms] | {arx.tau * 1e3:.2f} | {pem.tau * 1e3:.2f} | "
-          f"[{arx.tau_ci[0] * 1e3:.2f}, {arx.tau_ci[1] * 1e3:.2f}] |",
-          f"| t_d [ms] | {arx.td * 1e3:.1f} | {pem.td * 1e3:.1f} | — |",
-          f"| 带宽 [Hz] | {arx.bandwidth_hz:.2f} | {pem.bandwidth_hz:.2f} | — |",
-          f"| 离散 (a, b, d) | {arx.a:.5f}, {arx.b:.5f}, {arx.delay} | — | — |", "",
-          "## 验证指标", "",
-          f"- 训练段 VAF: ARX {m['vaf_train_arx']:.1f}% / PEM {m['vaf_train_pem']:.1f}%"]
+          "```", tf.g_s_str(), tf.g_z_str(),
+          f"特征方程(z): {tf.char_eq_z()}",
+          f"特征方程(s): {tf.char_eq_s()}", "```", ""]
+    if n1:
+        md += ["$$G(s) = K \\cdot e^{-t_d s}/(\\tau s + 1)$$", "",
+               "| 参数 | ARX (主) | PEM (OE) | ARX 95% CI |",
+               "|------|----------|----------|------------|",
+               f"| K [{gain_u or '-'}] | {arx.K:.4g} | {pem.K:.4g} | "
+               f"[{arx.K_ci[0]:.4g}, {arx.K_ci[1]:.4g}] |",
+               f"| τ [ms] | {arx.tau * 1e3:.2f} | {pem.tau * 1e3:.2f} | "
+               f"[{arx.tau_ci[0] * 1e3:.2f}, {arx.tau_ci[1] * 1e3:.2f}] |"
+               if arx.tau is not None and pem.tau is not None else "",
+               f"| t_d [ms] | {arx.td * 1e3:.1f} | {pem.td * 1e3:.1f} | — |",
+               f"| 带宽 [Hz] | {arx.bandwidth_hz:.2f} | {pem.bandwidth_hz:.2f} | — |"
+               if arx.bandwidth_hz and pem.bandwidth_hz else "",
+               f"| 离散 (a, b, d) | {arx.a:.5f}, {arx.b:.5f}, {arx.delay} | — | — |", ""]
+    else:
+        md += [f"| 量 | 值 |",
+               "|------|----------|",
+               f"| DC 增益 [{gain_u or '-'}] | {arx.K:.4g} (ARX) / {pem.K:.4g} (PEM) |",
+               f"| 极点 (z) | {np.round(tf.poles_z(), 5).tolist()} |",
+               f"| 极点 (s) | {[complex(np.round(p, 3)) for p in tf.poles_s()]} |",
+               f"| 主导时间常数 [ms] | {(tf.tau_eff() * 1e3) if tf.tau_eff() else float('nan'):.2f} |",
+               f"| 延迟 [ms] | {arx.td * 1e3:.1f} |",
+               f"| 稳定 | {tf.is_stable} |", ""]
+    md += ["## 验证指标", "",
+           f"- 训练段 VAF: ARX {m['vaf_train_arx']:.1f}% / PEM {m['vaf_train_pem']:.1f}%"]
     if res.has_holdout:
         md += [f"- 留出段 VAF: ARX {m['vaf_holdout_arx']:.1f}% / "
                f"PEM {m['vaf_holdout_pem']:.1f}%",
                f"- 留出段稳态误差: ARX {m['ss_err_holdout_arx_pct']:.2f}% / "
                f"PEM {m['ss_err_holdout_pem_pct']:.2f}%"]
-    md += [f"- Ljung-Box: Q={m['ljung_box_Q']:.1f}, p={m['ljung_box_p']:.3f}",
+    md += [f"- Ljung-Box (滞后≥{int(m.get('ljung_box_min_lag', 0)) + 1}): "
+           f"Q={m['ljung_box_Q']:.1f}, p={m['ljung_box_p']:.3f}",
            f"- 残差×输入互相关: max|ρ|={m['xcorr_max']:.4f} (带 {m['xcorr_band']:.4f})",
-           f"- 双方法差异: K {m['k_diff_pct']:.2f}%, τ {m['tau_diff_pct']:.2f}%", "",
+           f"- 双方法差异: K {m['k_diff_pct']:.2f}%"
+           + (f", τ {m['tau_diff_pct']:.2f}%"
+              if np.isfinite(m.get("tau_diff_pct", float('nan'))) else ""),
+           f"- 阶次: n={m.get('order_n')}, gap={m.get('order_gap')}", "",
            "## 验收清单", "", _checks_markdown(res.checks), "",
            "## 图表", ""]
     for p in png_paths:
         md.append(f"![{p.stem}]({p.name})")
     md += ["", "## 有效范围", "",
-           "- 工况: 见 `model.json` 的 `operating_conditions`（悬空装轮/供电电压/转速区间）",
-           "- 换负载或供电电压后 K 会改变（K ∝ 电压，τ ∝ 负载惯量），超出范围不保证精度",
-           "- 金标准验收: 换一个未用过的占空比做一次 5 s 阶跃复测，预测误差 ≤5% 即通过", ""]
-    (outdir / "report.md").write_text("\n".join(md), encoding="utf-8")
+           "- 工况: 见 `model.json` 的 `operating_conditions`",
+           "- 换负载或供电电压后增益会改变（增益 ∝ 电压，时间常数 ∝ 负载惯量）",
+           "- 金标准验收: 换一个未用过的输入幅值做一次 5 s 复测，预测误差 ≤5% 即通过", ""]
+    (outdir / "report.md").write_text("\n".join(x for x in md if x is not None),
+                                      encoding="utf-8")
 
-    # ---- report.html (interactive) -------------------------------------- #
+    # ---- report.html (interactive) ------------------------------------------- #
     parts = [
         "<!DOCTYPE html><html><head><meta charset='utf-8'>",
         f"<title>{title}</title>",
@@ -438,31 +620,23 @@ def write_report(res: IdentificationResult, outdir: str | Path,
         "h1{border-bottom:2px solid #1f77b4;padding-bottom:6px}"
         "table.param{border-collapse:collapse}"
         "table.param td,table.param th{border:1px solid #ccc;"
-        "padding:6px 12px;text-align:left}</style></head><body>",
+        "padding:6px 12px;text-align:left}pre{background:#f7f7f7;"
+        "padding:10px;border:1px solid #ddd;border-radius:4px}</style></head><body>",
         f"<h1>{title}</h1>",
-        f"<p>数据源: <code>{res.data.source}</code> &nbsp;|&nbsp; "
-        f"{res.data.fs:g} Hz / {res.data.counts_per_rev} counts/rev / "
-        f"{res.data.duration:.1f} s &nbsp;|&nbsp; "
+        f"<p>数据源: <code>{data.source}</code> &nbsp;|&nbsp; "
+        f"{data.fs:g} Hz / in: {data.input_unit or 'u'} / out: {data.output_unit or 'y'} / "
+        f"{data.duration:.1f} s &nbsp;|&nbsp; "
         f"{_dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>",
-        "<h2>模型 &nbsp;<code>G(s) = K·e<sup>-t<sub>d</sub>s</sup> / (τs+1)</code></h2>",
-        "<table class='param'><tr><th>参数</th><th>ARX (主)</th>"
-        "<th>PEM (计数拟合)</th><th>ARX 95% CI</th></tr>",
-        f"<tr><td>K [rpm/%]</td><td>{arx.K:.2f}</td><td>{pem.K:.2f}</td>"
-        f"<td>[{arx.K_ci[0]:.2f}, {arx.K_ci[1]:.2f}]</td></tr>",
-        f"<tr><td>τ [ms]</td><td>{arx.tau * 1e3:.2f}</td><td>{pem.tau * 1e3:.2f}</td>"
-        f"<td>[{arx.tau_ci[0] * 1e3:.2f}, {arx.tau_ci[1] * 1e3:.2f}]</td></tr>",
-        f"<tr><td>t<sub>d</sub> [ms]</td><td>{arx.td * 1e3:.1f}</td>"
-        f"<td>{pem.td * 1e3:.1f}</td><td>—</td></tr>",
-        f"<tr><td>带宽 [Hz]</td><td>{arx.bandwidth_hz:.2f}</td>"
-        f"<td>{pem.bandwidth_hz:.2f}</td><td>—</td></tr>",
-        f"<tr><td>离散 (a, b, d)</td><td>{arx.a:.5f}, {arx.b:.5f}, {arx.delay}</td>"
-        f"<td>—</td><td>—</td></tr></table>",
+        "<h2>模型</h2><pre>",
+        tf.g_s_str().replace("<", "&lt;"), "\n", tf.g_z_str().replace("<", "&lt;"),
+        "\n特征方程(z): ", tf.char_eq_z().replace("<", "&lt;"),
+        "\n特征方程(s): ", tf.char_eq_s().replace("<", "&lt;"),
+        "</pre>",
         "<h2>验收清单</h2>", _checks_html(res.checks),
         "<h2>图表 (可缩放/悬停)</h2>",
     ]
     for i, figdef in enumerate(figs):
         pf = _render_plotly(figdef)
-        include = "plotlyjs=cdn" if i else "plotlyjs=true"
         parts.append(f"<h3>{figdef['title']}</h3>")
         parts.append(pf.to_html(full_html=False, include_plotlyjs=(i == 0)))
     parts.append("</body></html>")
