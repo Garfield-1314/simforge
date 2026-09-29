@@ -12,12 +12,12 @@ Dynamic system modeling & simulation toolkit. 动态系统建模与仿真工具�
 
 ```bash
 # 环境：conda env simforge (Python 3.11, numpy/scipy/matplotlib/plotly/pytest)
-python examples/simulate_motor.py                 # 生成仿真数据（已知真值）
-python examples/motor_speed_id.py                 # 辨识 -> output/motor_sim/report.html
-python -m pytest tests -q                         # 12 项测试（端到端参数恢复回归）
+python examples/motor/simulate_motor.py      # 生成仿真数据（已知真值）
+python examples/motor/motor_speed_id.py      # 辨识 -> examples/motor/output/motor_sim/report.html
+python -m pytest tests -q                    # 回归测试
 ```
 
-真实数据：`python examples/motor_speed_id.py --input your_run.csv --holdout 50`
+真实数据：`python examples/motor/motor_speed_id.py --input your_run.csv --holdout 50`
 
 ### 项目结构
 
@@ -32,8 +32,8 @@ simforge/id/          系统辨识核心
   pipeline.py         端到端流程编排
   report.py           报告输出：8 张图 PNG + 交互式 HTML + model.json + report.md
   simulator.py        合成数据生成器（真值已知，用于算法自检）
-examples/             仿真数据生成、端到端辨识脚本
-tests/                pytest 回归测试
+examples/motor/       电机工程例子（自包含：脚本 + 数据 + 报告）
+tests/                pytest 回归测试（tests/motor/ 为电机专项）
 docs/motor_id_guide.md  采集规范 + 使用说明 + 验收标准
 ```
 

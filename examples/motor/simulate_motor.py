@@ -12,7 +12,8 @@ import argparse
 from pathlib import Path
 import sys
 
-ROOT = Path(__file__).resolve().parents[1]
+EXAMPLE_DIR = Path(__file__).resolve().parent
+ROOT = EXAMPLE_DIR.parents[1]          # repo root: examples/motor -> repo root
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -24,7 +25,7 @@ def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description="generate synthetic motor data CSV")
-    ap.add_argument("--out", default=str(ROOT / "data" / "motor_sim.csv"))
+    ap.add_argument("--out", default=str(EXAMPLE_DIR / "data" / "motor_sim.csv"))
     ap.add_argument("--fs", type=float, default=500.0)
     ap.add_argument("--cpr", type=int, default=4096, help="1024 lines x4")
     ap.add_argument("--K", type=float, default=TRUE_K, help="true gain rpm/%")

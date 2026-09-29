@@ -14,7 +14,8 @@ import argparse
 from pathlib import Path
 import sys
 
-ROOT = Path(__file__).resolve().parents[1]
+EXAMPLE_DIR = Path(__file__).resolve().parent
+ROOT = EXAMPLE_DIR.parents[1]          # repo root: examples/motor -> repo root
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -63,9 +64,9 @@ def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description="motor speed-loop identification")
-    ap.add_argument("--input", default=str(ROOT / "data" / "motor_sim.csv"))
+    ap.add_argument("--input", default=str(EXAMPLE_DIR / "data" / "motor_sim.csv"))
     ap.add_argument("--outdir", default=None,
-                    help="default: output/<input stem>")
+                    help="default: examples/motor/output/<input stem>")
     ap.add_argument("--holdout", type=float, default=50.0,
                     help="duty %% held out for validation (0 = disable)")
     ap.add_argument("--max-delay", type=int, default=None,
@@ -73,7 +74,7 @@ def main() -> None:
     ap.add_argument("--lags", type=int, default=10, help="Ljung-Box lags")
     args = ap.parse_args()
 
-    outdir = args.outdir or str(ROOT / "output" / Path(args.input).stem)
+    outdir = args.outdir or str(EXAMPLE_DIR / "output" / Path(args.input).stem)
 
     data = load_motor_csv(args.input)
     warnings = check_data(data)
