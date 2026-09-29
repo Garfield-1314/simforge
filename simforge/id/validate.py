@@ -262,11 +262,14 @@ def acceptance_checks(metrics: dict, has_holdout: bool,
     parts = [v for v in (ci_k, ci_tau) if np.isfinite(v)]
     ci_worst = max(parts) if parts else float("inf")
     arx_ci = metrics.get("K_ci_rel_pct", float("nan"))
+    val = f"K {ci_k:.1f}%" if np.isfinite(ci_k) else ""
+    if np.isfinite(ci_tau):
+        val += (f" / tau {ci_tau:.1f}%" if val else f"tau {ci_tau:.1f}%")
+    if np.isfinite(arx_ci):
+        val += f" (ARX K {arx_ci:.1f}%)"
     checks.append(_check(
         f"7 参数 95%CI 宽度 <= {th.ci_width:g}%", ci_worst <= th.ci_width,
-        f"K {ci_k:.1f}% / tau {ci_tau:.1f}%"
-        + (f" (ARX K {arx_ci:.1f}%)" if np.isfinite(arx_ci) else ""),
-        f"<= {th.ci_width:g}%"))
+        val or "n/a", f"<= {th.ci_width:g}%"))
 
     # 8 -- physical reference gain
     ref_gain = metrics.get("ref_gain")

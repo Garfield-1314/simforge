@@ -374,7 +374,9 @@ def _render_mpl_panel(ax, panel: dict) -> None:
     ax.grid(alpha=0.3)
     if panel.get("equal_aspect"):
         ax.set_aspect("equal", adjustable="box")
-    if panel["legend"] and not panel.get("text"):
+    has_label = (panel["series"] or panel["hlines"]
+                 or any(s.get("label") for s in panel["spans"]))
+    if panel["legend"] and has_label and not panel.get("text"):
         ax.legend(fontsize=8, loc="best")
 
 

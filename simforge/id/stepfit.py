@@ -163,6 +163,12 @@ def select_structure_pem(u: np.ndarray, y: np.ndarray, ts: float,
     of sample-specific disturbance projection and win on RSS alone.
     Orders whose criterion is within ``rows * ln(simplicity_rss_ratio)``
     of the best are treated as tied and the lowest such order wins.
+
+    To keep noise-fitting from deciding, candidates are fitted on a
+    random 70 % of the training rows and ranked by their *validation*
+    residual on the held-out 30 % (noise projection does not
+    generalise; genuine dynamics do).  The winning structure is then
+    refitted on all training rows.
     """
     from .arx import identify_arx_structure
 
@@ -176,6 +182,15 @@ def select_structure_pem(u: np.ndarray, y: np.ndarray, ts: float,
     train_idx = np.asarray(train_idx, dtype=int)
     simplicity_window = len(train_idx) * np.log(max(simplicity_rss_ratio, 1.0))
 
+    # 70/30 fit/validation split of the training rows (fixed seed)
+    rng = np.random.default_rng(0)
+    perm = rng.permutation(len(train_idx))
+    n_fit = max(int(0.7 * len(train_idx)), 10)
+    fit_idx = train_idx[perm[:n_fit]]
+    val_idx = train_idx[perm[n_fit:]]
+    if len(val_idx) < 10:            # tiny datasets: rank on all rows
+        fit_idx = val_idx = train_idx
+
     # best ARX delay per (n, m) from all stage-1 sweeps
     best_d: dict[tuple[int, int], set] = {}
     for st in arx_stage1:
@@ -184,7 +199,7 @@ def select_structure_pem(u: np.ndarray, y: np.ndarray, ts: float,
     if not best_d:
         raise ValueError("stage-1 ARX sweep is empty")
 
-    pen_log = np.log(max(len(train_idx), 2))
+    pen_val = np.log(max(len(val_idx), 2))
     table: list = []
     order_bic: dict[int, float] = {}
     for (nn, mm), d0s in sorted(best_d.items()):
@@ -197,17 +212,20 @@ def select_structure_pem(u: np.ndarray, y: np.ndarray, ts: float,
                     u, y, ts, nn, mm, dd, exclude_rows=exclude_rows,
                     criterion=criterion, input_unit=input_unit,
                     output_unit=output_unit)
-                pem_c = identify_pem(u, y, ts, train_idx=train_idx,
+                pem_c = identify_pem(u, y, ts, train_idx=fit_idx,
                                      structure=arx_c, input_unit=input_unit,
                                      output_unit=output_unit)
             except (ValueError, np.linalg.LinAlgError):
                 continue
-            rows = max(pem_c.n_rows, 2)
+            yh = pem_c.simulate_velocity(u)
+            rss_val = float(np.sum((yh[val_idx] - y[val_idx]) ** 2))
+            rows_v = max(len(val_idx), 2)
             p = nn + mm + 1
-            pen = 2.0 if criterion == "aic" else pen_log
-            crit_val = rows * np.log(max(pem_c.rss, 1e-300) / rows) + pen * p
+            pen = 2.0 if criterion == "aic" else pen_val
+            crit_val = rows_v * np.log(max(rss_val, 1e-300) / rows_v) + pen * p
             table.append({"n": nn, "m": mm, "d": dd,
-                          "pem_rss": pem_c.rss, "criterion": float(crit_val),
+                          "pem_rss": rss_val, "rss_fit": pem_c.rss,
+                          "criterion": float(crit_val),
                           "arx": arx_c, "pem": pem_c})
             if nn not in order_bic or crit_val < order_bic[nn]:
                 order_bic[nn] = float(crit_val)
@@ -225,15 +243,19 @@ def select_structure_pem(u: np.ndarray, y: np.ndarray, ts: float,
     best = min((r for r in table if r["n"] == n_pick),
                key=lambda r: r["criterion"])
     # refit the chosen structure with the noise-appropriate estimator
-    # (LS for process noise, IV for measurement noise) + full covariance
+    # (LS for process noise, IV for measurement noise) + full covariance,
+    # and the PEM on *all* training rows for the final coefficients
     from .arx import fit_structure_auto
     arx_final, _info = fit_structure_auto(
         u, y, ts, best["n"], best["m"], best["d"],
         exclude_rows=exclude_rows, criterion=criterion,
         input_unit=input_unit, output_unit=output_unit)
+    pem_final = identify_pem(u, y, ts, train_idx=train_idx,
+                             structure=arx_final, input_unit=input_unit,
+                             output_unit=output_unit)
     # annotate with stage-1 sweep info for reporting
     arx_final.sweep = [e for st in arx_stage1 for e in st.sweep]
-    return StructureSelection(arx=arx_final, pem=best["pem"], table=table,
+    return StructureSelection(arx=arx_final, pem=pem_final, table=table,
                               order_bic=order_bic, criterion=criterion,
                               simplicity_window=float(simplicity_window))
 

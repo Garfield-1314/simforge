@@ -97,3 +97,75 @@ def generate_dataset(path: str | Path, fs: float = 500.0, cpr: int = 4096,
 def load(path: str | Path) -> SystemData:
     from .io import load_motor_csv
     return load_motor_csv(path)
+
+
+# --------------------------------------------------------------------------- #
+# generic synthetic systems (for tests, demos and algorithm self-checks)
+# --------------------------------------------------------------------------- #
+def simulate_lti(u: np.ndarray, ad, bd, cd, dd, delay: int = 0,
+                 meas_noise: float = 0.0, seed: int | None = None
+                 ) -> np.ndarray:
+    """Simulate a discrete state-space system with input delay + measurement noise."""
+    u = np.asarray(u, dtype=float)
+    n = len(u)
+    ad = np.atleast_2d(np.asarray(ad, dtype=float))
+    bd = np.atleast_2d(np.asarray(bd, dtype=float))
+    cd = np.atleast_2d(np.asarray(cd, dtype=float))
+    rng = np.random.default_rng(seed)
+    nx = ad.shape[0]
+    x = np.zeros(nx)
+    y = np.empty(n)
+    for k in range(n):
+        uk = u[k - delay] if k >= delay else 0.0
+        y[k] = (cd @ x).item()
+        if meas_noise:
+            y[k] += rng.normal(0.0, meas_noise)
+        x = ad @ x + bd.reshape(nx) * uk
+    return y
+
+
+def second_order_system(fn_hz: float, zeta: float, gain: float = 1.0,
+                        ts: float = 0.002):
+    """Continuous G(s) = gain*wn^2/(s^2+2 z wn s+wn^2) -> discrete (ZOH).
+
+    Returns (ad, bd, cd, dd, truth) with truth = dict(wn, zeta, gain).
+    """
+    from scipy.signal import cont2discrete
+    wn = 2.0 * np.pi * fn_hz
+    A = np.array([[0.0, 1.0], [-wn ** 2, -2.0 * zeta * wn]])
+    B = np.array([[0.0], [wn ** 2]])
+    C = np.array([[gain, 0.0]])
+    D = np.array([[0.0]])
+    ad, bd, cd, dd, _ = cont2discrete((A, B, C, D), ts)
+    return ad, bd, cd, dd, {"wn": wn, "zeta": zeta, "gain": gain,
+                            "fn_hz": fn_hz}
+
+
+def generate_second_order_dataset(path: str | Path | None = None,
+                                  fn_hz: float = 2.0, zeta: float = 0.4,
+                                  gain: float = 2.0, ts: float = 0.002,
+                                  delay: int = 3, meas_noise: float = 0.02,
+                                  dwell: int = 50, n: int = 8000,
+                                  seed: int = 7) -> tuple[SystemData | None, dict]:
+    """Build (and optionally save) a second-order SISO dataset.
+
+    Excitation is :func:`simforge.id.excitation.random_dwell` (broadband)
+    so that order 2 is persistently excited.  Returns (data, truth).
+    """
+    from .excitation import random_dwell
+    u = random_dwell(n, -10.0, 10.0, dwell, seed=seed)
+    ad, bd, cd, dd, truth = second_order_system(fn_hz, zeta, gain, ts)
+    y = simulate_lti(u, ad, bd, cd, dd, delay=delay, meas_noise=meas_noise,
+                     seed=seed)
+    truth = dict(truth, delay=delay, ts=ts, meas_noise=meas_noise,
+                 excitation="random_dwell")
+    if path is None:
+        return None, truth
+    data = SystemData(t=np.arange(n) * ts, u=u, y=y, fs=1.0 / ts,
+                      input_unit="u", output_unit="y",
+                      meta={"generator": "simforge.id.simulator",
+                            "system": f"second_order fn={fn_hz}Hz zeta={zeta}",
+                            "delay_samples": str(delay)})
+    save_motor_csv(path, data)          # generic t_s,u,y layout (raw is None)
+    from .io import load_system_csv
+    return load_system_csv(path), truth

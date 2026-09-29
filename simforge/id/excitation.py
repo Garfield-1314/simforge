@@ -70,6 +70,32 @@ def prbs(n: int, levels: tuple[float, float], p_switch: float = 0.1,
     return u
 
 
+def random_dwell(n: int, low: float = -1.0, high: float = 1.0,
+                 dwell_samples: int = 50, seed: int | None = None) -> np.ndarray:
+    """Random-dwell (PRBS-like) multi-level input -- broadband excitation.
+
+    Each level is held for a roughly Gaussian number of samples
+    (``dwell_samples`` mean, 1/3 std, minimum 10) and levels alternate
+    with random polarity.  Compared with plain step-then-dwell sequences
+    this excites the dynamics persistently, which is required to
+    identify orders above 1 (PE of order 2n).
+    """
+    if n <= 0:
+        return np.empty(0)
+    rng = np.random.default_rng(seed)
+    u = np.empty(n, dtype=float)
+    cur = float(low)
+    i = 0
+    while i < n:
+        length = max(10, int(rng.normal(dwell_samples, max(dwell_samples / 3.0, 1.0))))
+        u[i:i + length] = cur
+        i += length
+        cur = high if cur < 0 else low
+        if rng.random() < 0.3:
+            cur = -cur
+    return u
+
+
 def recommend_sample_rate(bandwidth_hz: float) -> float:
     """Sample rate rule-of-thumb: >= 10x the closed-loop/plant bandwidth."""
     return float(max(100.0, MIN_SAMPLES_PER_TIME_CONSTANT * bandwidth_hz))
